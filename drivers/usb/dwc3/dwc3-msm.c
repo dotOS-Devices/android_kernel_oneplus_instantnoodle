@@ -120,6 +120,8 @@
 #define DWC3_GEVNTADRHI_EVNTADRHI_GSI_IDX(n)	(n << 16)
 #define DWC3_GEVENT_TYPE_GSI			0x3
 
+struct dwc3_msm *g_mdwc;
+
 enum usb_gsi_reg {
 	GENERAL_CFG_REG,
 	DBL_ADDR_L,
@@ -354,6 +356,7 @@ struct dwc3_msm {
 	u64			dummy_gsi_db;
 	dma_addr_t		dummy_gsi_db_dma;
 	int			orientation_override;
+	bool			awake_status;
 };
 
 #define USB_HSPHY_3P3_VOL_MIN		3050000 /* uV */
@@ -2648,6 +2651,7 @@ static int dwc3_msm_suspend(struct dwc3_msm *mdwc, bool enable_wakeup)
 		pm_wakeup_event(mdwc->dev, mdwc->lpm_to_suspend_delay);
 	} else {
 		pm_relax(mdwc->dev);
+		g_mdwc->awake_status = false;
 	}
 
 	atomic_set(&dwc->in_lpm, 1);
@@ -2705,6 +2709,7 @@ static int dwc3_msm_resume(struct dwc3_msm *mdwc)
 	}
 
 	pm_stay_awake(mdwc->dev);
+	g_mdwc->awake_status = true;
 
 	if (mdwc->in_host_mode && mdwc->max_rh_port_speed == USB_SPEED_HIGH)
 		dwc3_msm_update_bus_bw(mdwc, BUS_VOTE_SVS);
@@ -3643,6 +3648,17 @@ static int dwc_dpdm_cb(struct notifier_block *nb, unsigned long evt, void *p)
 
 	return NOTIFY_OK;
 }
+
+void op_release_usb_lock(void)
+{
+	dev_info(g_mdwc->dev, "%s enter\n", __func__);
+	if (g_mdwc->awake_status) {
+		dev_info(g_mdwc->dev, "%s relese lock\n", __func__);
+		pm_relax(g_mdwc->dev);
+		g_mdwc->awake_status = false;
+	}
+}
+
 static int dwc3_msm_probe(struct platform_device *pdev)
 {
 	struct device_node *node = pdev->dev.of_node, *dwc3_node;
@@ -3674,6 +3690,7 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
+	g_mdwc = mdwc;
 	/*
 	 * Create an ordered freezable workqueue for sm_work so that it gets
 	 * scheduled only after pm_resume has happened completely. This helps
